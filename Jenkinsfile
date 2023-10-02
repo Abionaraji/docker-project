@@ -7,7 +7,7 @@ pipeline{
     stages{
         stage('Git Checkout'){
             steps{
-                git branch: 'master', url: 'https://github.com/Abionaraji/batch-3-project.git'
+                git branch: 'master', url: 'https://github.com/Abionaraji/docker-project.git'
             }
         }
         stage('Maven Build'){
@@ -52,7 +52,7 @@ pipeline{
         }
         stage('Uploading War'){
             steps{
-                nexusArtifactUploader artifacts: [[artifactId: 'vprofile', classifier: '', file: 'target/vprofile-v2.war', type: 'war']], credentialsId: 'nexus-jenkins', groupId: 'QA', nexusUrl: '52.70.57.181:8081', nexusVersion: 'nexus3', protocol: 'http', repository: 'vpro-maven', version: 'v2'
+                nexusArtifactUploader artifacts: [[artifactId: 'vprofile', classifier: '', file: 'target/vprofile-v2.war', type: 'war']], credentialsId: 'nexus-jenkins', groupId: 'QA', nexusUrl: '3.84.34.63:8081', nexusVersion: 'nexus3', protocol: 'http', repository: 'vpro-maven', version: 'v2'
             }
         }
     }
