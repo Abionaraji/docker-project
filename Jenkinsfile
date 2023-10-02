@@ -1,59 +1,124 @@
-pipeline{
+def COLOR_MAP = [
+    'SUCCESS': 'good',
+    'FAILURE': 'danger'
+]
+pipeline {
     agent any
-    tools{
-        maven 'Maven'
+    tools {
+        maven 'Mave'
         jdk 'JDK'
     }
+    environment {
+        SNAP_REPO = 'vpro-snapshots'
+        NEXUS_USER = 'admin'
+        NEXUS_PASS = credentials('nexus-jenkins')
+        DOCKER_PASS= credentials('dockerpass')
+        RELEASE_REPO = 'vpro-release'
+        CENTRAL_REPO = 'vpro-maven-central'
+        NEXUS_IP = '100.24.255.64'
+        NEXUS_PORT = '8081'
+        NEXUS_GRP_REPO = 'vpro-maven-group'
+        NEXUS_LOGIN = 'sonar'
+        SONARSERVER = 'SONARSERVER'
+        SONARSCANNER = 'sonar-scanner'
+    }
     stages{
-        stage('Git Checkout'){
+        stage('BUILD'){
             steps{
-                git branch: 'master', url: 'https://github.com/Abionaraji/docker-project.git'
+                sh 'mvn -s settings.xml install -DskipTests'
             }
-        }
-        stage('Maven Build'){
-            steps{
-                sh 'mvn clean install'
-            }
-            post{
-                success{
-                    echo 'New achiving'
+            post {
+                success {
+                    echo "Now Archiving"
                     archiveArtifacts artifacts: '**/*.war'
                 }
             }
         }
-        stage('Unit Test'){
-            steps{
-                sh 'mvn test'
+        stage ('TEST'){
+            steps {
+                sh 'mvn -s settings.xml test'
             }
         }
-        stage('Checkstyle Analysis'){
+        stage ('CHECKSTYLE ANALYSIS'){
             steps{
-                sh 'mvn checkstyle:checkstyle'
+                sh 'mvn -s settings.xml checkstyle:checkstyle'
             }
         }
-        stage('Integrated Testing'){
-            steps{
-                sh 'mvn verify -DiskipUnitTests'
+        stage ('SONAR ANALYSIS') {
+            environment {
+                scannerHome = tool "${SONARSCANNER}"
+            }
+            steps {
+                withSonarQubeEnv("${SONARSERVER}") {
+               sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=vprofile \
+                   -Dsonar.projectName=vprofile \
+                   -Dsonar.projectVersion=1.0 \
+                   -Dsonar.sources=src/ \
+                   -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
+                   -Dsonar.junit.reportsPath=target/surefire-reports/ \
+                   -Dsonar.jacoco.reportsPath=target/jacoco.exec \
+                   -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml'''
+            }
             }
         }
-        stage('Sonar Scanner'){
-            steps{
-                withSonarQubeEnv(credentialsId: 'batch-3', installationName: 'SonarQube') {
-                    sh 'mvn sonar:sonar'
+        stage ('QUALITY GATE') {
+            steps {
+                timeout (time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
-        stage('Sonar Gate'){
+        stage ('UPLOAD ARTIFACT') {
+            steps {
+                    nexusArtifactUploader(
+                    nexusVersion: 'nexus3',
+                    protocol: 'http',
+                    nexusUrl: "${NEXUS_IP}:${NEXUS_PORT}",
+                    groupId: 'QA',
+                    version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
+                    repository: "${RELEASE_REPO}",
+                    credentialsId: "${NEXUS_LOGIN}",
+                    artifacts: [
+                    [artifactId: 'vproapp',
+                        classifier: '',
+                        file: 'target/vprofile-v2.war',
+                        type: 'war']
+                     ]
+                    )
+                     }
+        }
+        stage('ANSIBLE DEPLOY to STAGING'){
             steps{
-                timeout(time: 1, unit: 'HOURS') {
-                waitForQualityGate abortPipeline: true
-              }
+                ansiblePlaybook([
+                    inventory: 'ansible/stage.inventory',
+                    playbook: 'ansible/site.yml',
+                    installation: 'ansible',
+                    colorized: true,
+                    credentialsId: 'dockerlogin',
+                    disableHostKeyChecking: true,
+                    extraVars:[
+                        USER: 'admin',
+                        PASS: "${NEXUS_PASS}",
+                        nexusip: "${NEXUS_IP}",
+                        reponame: "${RELEASE_REPO}",
+                        groupid: 'QA',
+                        artifactid: 'vproapp',
+                        build: "${env.BUILD_ID}",
+                        time: "${env.BUILD_TIMESTAMP}",
+                        vprofile_version: "vproapp-${env.BUILD_ID}-${env.BUILD_TIMESTAMP}.war",
+                        dockerPass: "${DOCKER_PASS}"
+
+                    ]
+                ])
             }
         }
-        stage('Uploading War'){
-            steps{
-                nexusArtifactUploader artifacts: [[artifactId: 'vprofile', classifier: '', file: 'target/vprofile-v2.war', type: 'war']], credentialsId: 'nexus-jenkins', groupId: 'QA', nexusUrl: '3.84.34.63:8081', nexusVersion: 'nexus3', protocol: 'http', repository: 'vpro-maven', version: 'v2'
-            }
+    }
+    post {
+        always {
+            echo 'slack notifications.'
+            slackSend channel: '#project-ci',
+            color: COLOR_MAP[currentBuild.currentResult],
+            message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} \n More info at: ${env.BUILD_URL}"
         }
     }
 }
