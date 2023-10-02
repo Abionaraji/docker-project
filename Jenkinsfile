@@ -1,106 +1,59 @@
-def COLOR_MAP = [
-    'SUCCESS': 'good',
-    'FAILURE': 'danger'
-]
-pipeline {
+pipeline{
     agent any
-    tools {
+    tools{
         maven 'Maven'
         jdk 'JDK'
     }
-    environment {
-        SNAP_REPO = 'vpro-snapshots'
-        NEXUS_USER = 'admin'
-        NEXUS_PASS = 'admin'
-        RELEASE_REPO = 'vpro-release'
-        CENTRAL_REPO = 'vpro-maven-central'
-        NEXUS_IP = '3.84.34.63'
-        NEXUS_PORT = '8081'
-        NEXUS_GRP_REPO = 'vpro-maven-group'
-        NEXUS_LOGIN = 'nexuslogin'
-        SONARSERVER = 'SONARSERVER'
-        SONARSCANNER = 'SONARSCANNER'
-    }
     stages{
-        stage('BUILD'){
+        stage('Git Checkout'){
             steps{
-                sh 'mvn -s settings.xml install -DskipTests'
+                git branch: 'master', url: 'https://github.com/Abionaraji/batch-3-project.git'
             }
-            post {
-                success {
-                    echo "Now Archiving"
+        }
+        stage('Maven Build'){
+            steps{
+                sh 'mvn clean install'
+            }
+            post{
+                success{
+                    echo 'New achiving'
                     archiveArtifacts artifacts: '**/*.war'
                 }
             }
         }
-        stage ('TEST'){
-            steps {
-                sh 'mvn -s settings.xml test'
-            }
-            post {
-                success {
-            echo 'Test Stage'
-            slackSend channel: '#cicd-devops',
-            color: 'good',
-            message: "Test Stage is success Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} \n More info at: ${env.BUILD_URL}"
-        }
-    }
-        }
-        stage ('CHECKSTYLE ANALYSIS'){
+        stage('Unit Test'){
             steps{
-                sh 'mvn -s settings.xml checkstyle:checkstyle'
+                sh 'mvn test'
             }
         }
-        stage ('SONAR ANALYSIS') {
-            environment {
-                scannerHome = tool "${SONARSCANNER}"
-            }
-            steps {
-                withSonarQubeEnv("${SONARSERVER}") {
-               sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=vprofile \
-                   -Dsonar.projectName=vprofile \
-                   -Dsonar.projectVersion=1.0 \
-                   -Dsonar.sources=src/ \
-                   -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
-                   -Dsonar.junit.reportsPath=target/surefire-reports/ \
-                   -Dsonar.jacoco.reportsPath=target/jacoco.exec \
-                   -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml'''
-            }
+        stage('Checkstyle Analysis'){
+            steps{
+                sh 'mvn checkstyle:checkstyle'
             }
         }
-        stage ('QUALITY GATE') {
-            steps {
-                timeout (time: 10, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+        stage('Integrated Testing'){
+            steps{
+                sh 'mvn verify -DiskipUnitTests'
+            }
+        }
+        stage('Sonar Scanner'){
+            steps{
+                withSonarQubeEnv(credentialsId: 'batch-3', installationName: 'SonarQube') {
+                    sh 'mvn sonar:sonar'
                 }
             }
         }
-        stage ('UPLOAD ARTIFACT') {
-            steps {
-                    nexusArtifactUploader(
-                    nexusVersion: 'nexus3',
-                    protocol: 'http',
-                    nexusUrl: "${NEXUS_IP}:${NEXUS_PORT}",
-                    groupId: 'QA',
-                    version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
-                    repository: "${RELEASE_REPO}",
-                    credentialsId: "${NEXUS_LOGIN}",
-                    artifacts: [
-                    [artifactId: 'vproapp',
-                        classifier: '',
-                        file: 'target/vprofile-v2.war',
-                        type: 'war']
-                     ]
-                    )
-                     }
+        stage('Sonar Gate'){
+            steps{
+                timeout(time: 1, unit: 'HOURS') {
+                waitForQualityGate abortPipeline: true
+              }
+            }
         }
-    }
-    post {
-        always {
-            echo 'slack notifications.'
-            slackSend channel: '#cicd-devops',
-            color: COLOR_MAP[currentBuild.currentResult],
-            message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} \n More info at: ${env.BUILD_URL}"
+        stage('Uploading War'){
+            steps{
+                nexusArtifactUploader artifacts: [[artifactId: 'vprofile', classifier: '', file: 'target/vprofile-v2.war', type: 'war']], credentialsId: 'nexus-jenkins', groupId: 'QA', nexusUrl: '52.70.57.181:8081', nexusVersion: 'nexus3', protocol: 'http', repository: 'vpro-maven', version: 'v2'
+            }
         }
     }
 }
