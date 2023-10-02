@@ -5,8 +5,8 @@ def COLOR_MAP = [
 pipeline {
     agent any
     tools {
-        maven 'MAVEN3'
-        jdk 'OracleJDK8'
+        maven 'Maven'
+        jdk 'JDK'
     }
     environment {
         SNAP_REPO = 'vpro-snapshots'
